@@ -1,0 +1,58 @@
+import pandas as pd
+from neuralforecast.models import NBEATS
+from neuralforecast import NeuralForecast
+
+# Load the data
+df = pd.read_csv('your_data.csv', parse_dates=['Month'], index_col='Month')
+df.index.name = 'Month_Index'
+df = df.reset_index()
+
+# ✅ Normalize date to month-start
+df['Month_Index'] = pd.to_datetime(df['Month_Index']).dt.to_period('M').dt.to_timestamp()
+
+# Container for all forecasts
+all_forecasts = []
+
+# Get all unique combinations of ProductCategory and Region
+combinations = df[['ProductCategory', 'Region']].drop_duplicates()
+
+for _, row in combinations.iterrows():
+    category = row['ProductCategory']
+    region = row['Region']
+
+    # Filter data for the current combination
+    filtered_df = df[(df['ProductCategory'] == category) & (df['Region'] == region)].copy()
+
+    # Skip if not enough data
+    if len(filtered_df) < 60:
+        continue
+
+    # Rename columns as required by NeuralForecast
+    filtered_df = filtered_df.rename(columns={'Month_Index': 'ds', 'Revenue': 'y'})
+    filtered_df['unique_id'] = f'{category}_{region}'.replace(' ', '_')
+
+    model_input = filtered_df[['unique_id', 'ds', 'y']]
+
+    # Define and train the model
+    model = NBEATS(h=26, input_size=48, max_steps=1000)
+    nf = NeuralForecast(models=[model], freq='MS')  # ✅ Use start-of-month frequency
+    nf.fit(df=model_input)
+
+    # Generate forecast
+    forecast_df = nf.predict()
+
+    # Add identifiers back
+    forecast_df['ProductCategory'] = category
+    forecast_df['Region'] = region
+
+    # ✅ Optional: Ensure forecast dates are aligned to month-start
+    forecast_df['ds'] = pd.to_datetime(forecast_df['ds']).dt.to_period('M').dt.to_timestamp()
+
+    all_forecasts.append(forecast_df)
+
+# Combine all forecasts into a single DataFrame
+final_forecast_df = pd.concat(all_forecasts, ignore_index=True)
+
+# Save to Excel
+final_forecast_df.to_excel('nbeats_all_forecasts.xlsx', index=False)
+print("✅ Forecast saved to 'nbeats_all_forecasts.xlsx'")
